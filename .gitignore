@@ -1,0 +1,28 @@
+# ===== STM32CubeIDE 빌드 산출물 =====
+/Debug/
+/Release/
+*.o
+*.d
+*.su
+*.cyclo
+*.list
+*.map
+*.elf
+*.bin
+*.hex
+
+# ===== IDE 로컬 설정 (프로젝트 파일은 커밋 유지) =====
+# 유지: .project / .cproject / .mxproject / *.ioc  (CubeIDE/CubeMX 재현에 필요)
+.settings/
+*.launch
+
+# ===== Subversion 잔재 =====
+.svn/
+
+# ===== OS / 에디터 =====
+.DS_Store
+Thumbs.db
+*~
+*.swp
+.vscode/
+.idea/

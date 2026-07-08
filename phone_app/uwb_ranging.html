@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>UWB Range</title>
+<style>
+  :root{
+    --bg:#0b0f1a; --card:#141a2b; --accent:#34e0c4; --accent2:#5b8cff;
+    --text:#e8edf7; --muted:#8a93a8; --danger:#ff5d6c; --ok:#34e0c4;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(120% 80% at 50% -10%, #1a2236 0, var(--bg) 60%) , var(--bg);
+    color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex; flex-direction:column; align-items:center; padding:18px; gap:16px; min-height:100%;
+  }
+  header{width:100%;max-width:480px;display:flex;align-items:center;justify-content:space-between}
+  .title{font-weight:700;font-size:20px;letter-spacing:.5px}
+  .title small{display:block;color:var(--muted);font-weight:500;font-size:12px;letter-spacing:1px}
+  .dot{width:11px;height:11px;border-radius:50%;background:var(--danger);box-shadow:0 0 10px var(--danger);transition:.3s}
+  .dot.on{background:var(--ok);box-shadow:0 0 12px var(--ok)}
+  .card{width:100%;max-width:480px;background:linear-gradient(180deg,#171e30,#101525);
+        border:1px solid #20283d;border-radius:22px;padding:22px;box-shadow:0 12px 40px rgba(0,0,0,.4)}
+  .gaugewrap{display:flex;flex-direction:column;align-items:center;gap:4px}
+  .reading{font-size:64px;font-weight:800;letter-spacing:-1px;line-height:1}
+  .reading .unit{font-size:22px;color:var(--muted);font-weight:600;margin-left:6px}
+  .sub{color:var(--muted);font-size:13px}
+  svg{width:100%;max-width:360px;height:auto;display:block}
+  .stats{display:flex;gap:10px;margin-top:6px}
+  .stat{flex:1;background:#0e1322;border:1px solid #1d2740;border-radius:14px;padding:10px 12px;text-align:center}
+  .stat b{display:block;font-size:18px}
+  .stat span{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  canvas{width:100%;height:90px;margin-top:14px;background:#0c111e;border-radius:12px;border:1px solid #1d2740}
+  button{appearance:none;border:none;border-radius:16px;padding:16px;font-size:17px;font-weight:700;
+         width:100%;max-width:480px;color:#06221d;background:linear-gradient(90deg,var(--accent),var(--accent2));
+         box-shadow:0 8px 24px rgba(52,224,196,.25);transition:.15s}
+  button:active{transform:translateY(1px) scale(.995)}
+  button.disc{background:linear-gradient(90deg,#3a425a,#39405a);color:#fff}
+  .note{max-width:480px;color:var(--muted);font-size:12px;line-height:1.5;text-align:center}
+  .err{color:var(--danger)}
+</style>
+</head>
+<body>
+  <header>
+    <div class="title">UWB RANGE<small id="status">DISCONNECTED</small></div>
+    <div id="dot" class="dot"></div>
+  </header>
+
+  <div class="card">
+    <div class="gaugewrap">
+      <svg viewBox="0 0 200 120" aria-hidden="true">
+        <path d="M20 110 A 80 80 0 0 1 180 110" fill="none" stroke="#1d2740" stroke-width="14" stroke-linecap="round"/>
+        <path id="arc" d="M20 110 A 80 80 0 0 1 180 110" fill="none" stroke="url(#g)" stroke-width="14"
+              stroke-linecap="round" stroke-dasharray="251.2" stroke-dashoffset="251.2"/>
+        <defs>
+          <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#34e0c4"/><stop offset="1" stop-color="#5b8cff"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <div class="reading"><span id="dist">--</span><span class="unit">m</span></div>
+      <div class="sub" id="updated">대기 중…</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b id="vmin">--</b><span>MIN m</span></div>
+      <div class="stat"><b id="vmax">--</b><span>MAX m</span></div>
+      <div class="stat"><b id="vrate">0</b><span>Hz</span></div>
+    </div>
+
+    <canvas id="spark" width="440" height="90"></canvas>
+  </div>
+
+  <button id="btn">📡 보드에 연결</button>
+  <div class="note" id="note">
+    Android Chrome 에서 열어주세요. 보드 광고 이름은 <b>UWB-RANGE</b> 입니다.<br>
+    (iOS 는 Web Bluetooth 미지원 → <b>Bluefy</b> 브라우저 사용)
+  </div>
+
+<script>
+const SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0";
+const CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1";
+const GAUGE_MAX_M  = 5.0;          // 게이지 풀스케일 (m)
+const ARC_LEN      = 251.2;        // 반원 호 길이(=π*80)
+
+let device=null, characteristic=null;
+let vmin=Infinity, vmax=-Infinity, count=0, lastSec=Math.floor(Date.now()/1000), rate=0;
+const hist=[]; const HISTN=120;
+
+const $ = id => document.getElementById(id);
+const btn=$("btn"), dot=$("dot");
+const ctx=$("spark").getContext("2d");
+
+function setConnected(on){
+  dot.classList.toggle("on",on);
+  $("status").textContent = on ? "CONNECTED" : "DISCONNECTED";
+  btn.textContent = on ? "⏏︎ 연결 해제" : "📡 보드에 연결";
+  btn.classList.toggle("disc",on);
+}
+
+function render(dist){
+  $("dist").textContent = dist.toFixed(2);
+  $("updated").textContent = new Date().toLocaleTimeString();
+  const frac = Math.max(0, Math.min(1, dist / GAUGE_MAX_M));
+  $("arc").setAttribute("stroke-dashoffset", (ARC_LEN*(1-frac)).toFixed(1));
+  if(dist<vmin){vmin=dist;$("vmin").textContent=dist.toFixed(2);}
+  if(dist>vmax){vmax=dist;$("vmax").textContent=dist.toFixed(2);}
+  count++;
+  const s=Math.floor(Date.now()/1000);
+  if(s!==lastSec){rate=count;count=0;lastSec=s;$("vrate").textContent=rate;}
+  hist.push(dist); if(hist.length>HISTN)hist.shift();
+  drawSpark();
+}
+
+function drawSpark(){
+  const w=ctx.canvas.width, h=ctx.canvas.height;
+  ctx.clearRect(0,0,w,h);
+  if(hist.length<2) return;
+  const max=Math.max(GAUGE_MAX_M, ...hist), min=0;
+  ctx.lineWidth=2; ctx.strokeStyle="#34e0c4"; ctx.beginPath();
+  hist.forEach((v,i)=>{
+    const x=i/(HISTN-1)*w;
+    const y=h-((v-min)/(max-min))*(h-10)-5;
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  });
+  ctx.stroke();
+}
+
+function onValue(e){
+  const dv=e.target.value;            // DataView
+  if(dv.byteLength>=4){
+    const d=dv.getFloat32(0,true);    // float32 little-endian (m)
+    if(isFinite(d) && d>-1 && d<1000) render(d);
+  }
+}
+
+async function connect(){
+  try{
+    $("note").classList.remove("err");
+    device = await navigator.bluetooth.requestDevice({
+      filters:[{namePrefix:"UWB"}],
+      optionalServices:[SERVICE_UUID]
+    });
+    device.addEventListener("gattserverdisconnected", ()=>{ setConnected(false); });
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(SERVICE_UUID);
+    characteristic = await svc.getCharacteristic(CHAR_UUID);
+    await characteristic.startNotifications();
+    characteristic.addEventListener("characteristicvaluechanged", onValue);
+    setConnected(true);
+  }catch(err){
+    $("note").innerHTML = "연결 실패: "+err.message;
+    $("note").classList.add("err");
+    setConnected(false);
+  }
+}
+
+function disconnect(){
+  if(device && device.gatt.connected) device.gatt.disconnect();
+  setConnected(false);
+}
+
+btn.addEventListener("click",()=>{
+  if(!("bluetooth" in navigator)){
+    $("note").innerHTML="이 브라우저는 Web Bluetooth 를 지원하지 않습니다. Android Chrome 또는 iOS Bluefy 를 사용하세요.";
+    $("note").classList.add("err"); return;
+  }
+  (device && device.gatt.connected) ? disconnect() : connect();
+});
+</script>
+</body>
+</html>
