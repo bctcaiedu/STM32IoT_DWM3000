@@ -149,6 +149,7 @@ bool dw3000_twr_initiator_once(float *distance_m)
     frame_seq_nb++;
 
     if (!(status & DWT_INT_RXFCG_BIT_MASK)) {
+        dwt_forcetrxoff();            /* 타임아웃/에러 → 트랜시버 정리(다음 사이클 복구) */
         dwt_writesysstatuslo(SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
         return false;
     }
@@ -157,9 +158,9 @@ bool dw3000_twr_initiator_once(float *distance_m)
     /* 3) 프레임 읽기 */
     uint8_t  rng;
     uint16_t frame_len = dwt_getframelength(&rng);
-    if (frame_len == 0 || frame_len > sizeof(rx_buffer)) return false;
+    if (frame_len == 0 || frame_len > sizeof(rx_buffer)) { dwt_forcetrxoff(); return false; }
     dwt_readrxdata(rx_buffer, frame_len, 0);
-    if (rx_buffer[MSG_FUNC_IDX] != FUNC_RESP) return false;
+    if (rx_buffer[MSG_FUNC_IDX] != FUNC_RESP) { dwt_forcetrxoff(); return false; }
 
     /* 4) 타임스탬프 수집 */
     uint32_t poll_tx_ts = dwt_readtxtimestamplo32();
@@ -183,15 +184,20 @@ bool dw3000_twr_initiator_once(float *distance_m)
  * ------------------------------------------------------------------ */
 void dw3000_twr_responder_once(void)
 {
-    /* poll 무한 대기 (타임아웃 끄기) */
-    dwt_setrxtimeout(0);
+    dwt_forcetrxoff();                 /* 이전 잔여 상태 정리 후 새로 RX */
+    dwt_setrxtimeout(0);               /* poll 무한 대기 */
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
 
-    uint32_t status;
+    /* RXFCG(수신) 또는 에러 대기. 상태 비트가 전혀 안 서서 갇히는 경우를
+       대비해 소프트 가드로 탈출 → forcetrxoff 후 반환(메인 루프가 재무장). */
+    uint32_t status; uint32_t guard = 0;
     while (!((status = dwt_readsysstatuslo()) &
-             (DWT_INT_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_ERR))) { }
+             (DWT_INT_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_ERR))) {
+        if (++guard > 800000UL) { dwt_forcetrxoff(); return; }
+    }
 
     if (!(status & DWT_INT_RXFCG_BIT_MASK)) {
+        dwt_forcetrxoff();             /* 에러 → 강제 오프 후 복구 */
         dwt_writesysstatuslo(SYS_STATUS_ALL_RX_ERR);
         return;
     }
@@ -199,9 +205,9 @@ void dw3000_twr_responder_once(void)
 
     uint8_t  rng;
     uint16_t frame_len = dwt_getframelength(&rng);
-    if (frame_len == 0 || frame_len > sizeof(rx_buffer)) return;
+    if (frame_len == 0 || frame_len > sizeof(rx_buffer)) { dwt_forcetrxoff(); return; }
     dwt_readrxdata(rx_buffer, frame_len, 0);
-    if (rx_buffer[MSG_FUNC_IDX] != FUNC_POLL) return;
+    if (rx_buffer[MSG_FUNC_IDX] != FUNC_POLL) { dwt_forcetrxoff(); return; }
 
     /* poll 수신 타임스탬프 (40-bit) */
     uint8_t  ts_b[5];
@@ -226,7 +232,13 @@ void dw3000_twr_responder_once(void)
     dwt_writetxfctrl(sizeof(tx_resp_msg) + FCS_LEN, 0, 1);
 
     if (dwt_starttx(DWT_START_TX_DELAYED) == DWT_SUCCESS) {
-        while (!(dwt_readsysstatuslo() & DWT_INT_TXFRS_BIT_MASK)) { }
+        /* TX 완료 대기 (완료 안 오면 갇히지 않게 가드로 탈출) */
+        uint32_t g2 = 0;
+        while (!(dwt_readsysstatuslo() & DWT_INT_TXFRS_BIT_MASK)) {
+            if (++g2 > 200000UL) break;
+        }
         dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
+    } else {
+        dwt_forcetrxoff();             /* 지연TX 실패(시각 지남 등) → 정리 */
     }
 }
