@@ -9,10 +9,18 @@
 #include "dw3000_twr.h"
 #include "deca_device_api.h"
 #include <string.h>
+#include <stdio.h>
+#include <math.h>
 
 /* ---- 안테나 지연 (채널5 기본값. 정밀도 필요 시 실측 캘리브레이션) ---- */
 #define TX_ANT_DLY 16385
 #define RX_ANT_DLY 16385
+
+/* 런타임 안테나 딜레이(TX=RX 동일값). 캘리브레이션이 이 값을 갱신한다. */
+static uint16_t g_ant_dly = TX_ANT_DLY;
+
+/* 캘리브레이션 수렴 허용 오차 (m) */
+#define CAL_TOL_M  0.02
 
 /* ---- 메시지 포맷 (Qorvo SS-TWR 호환) ----
  *  공통 헤더 10B: FC(2) seq(1) PANID(2) addr/tag(4) func(1)
@@ -57,12 +65,67 @@ static void ts_get(const uint8_t *f, uint32_t *ts)
 /* ------------------------------------------------------------------ */
 void dw3000_twr_init(void)
 {
-    dwt_setrxantennadelay(RX_ANT_DLY);
-    dwt_settxantennadelay(TX_ANT_DLY);
+    dwt_setrxantennadelay(g_ant_dly);
+    dwt_settxantennadelay(g_ant_dly);
     /* initiator 용: TX 완료 후 자동 RX 활성까지 지연 + 응답 타임아웃.
        responder 에서도 무해. */
     dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
     dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
+}
+
+/* 런타임 안테나 딜레이 설정/조회 (TX=RX 동일값) */
+void dw3000_twr_set_antdelay(uint16_t d)
+{
+    g_ant_dly = d;
+    dwt_settxantennadelay(d);
+    dwt_setrxantennadelay(d);
+}
+uint16_t dw3000_twr_get_antdelay(void) { return g_ant_dly; }
+
+/* ------------------------------------------------------------------ *
+ * 안테나 딜레이 캘리브레이션 (APS014 기반, INITIATOR 에서 실행)
+ *   - 앵커(RESPONDER)를 known_m 거리에 정확히(LOS) 두고 실행.
+ *   - N회 측정 평균 → 오차를 DTU 로 환산 → 딜레이 보정 → 수렴까지 반복.
+ *   - 반환: 최종 안테나 딜레이 (이 값을 TX_ANT_DLY/RX_ANT_DLY 에 반영).
+ *   참고: 문서 권장은 DS-TWR 이나 본 포팅은 SS-TWR → 표본수를 늘려 평균으로 보완.
+ * ------------------------------------------------------------------ */
+uint16_t dw3000_twr_calibrate(float known_m, int n_samples, int max_iter)
+{
+    for (int it = 0; it < max_iter; it++) {
+        double sum = 0.0; int got = 0;
+        /* 유효 측정 n_samples 개 확보 (최대 3배 시도) */
+        for (int i = 0; i < n_samples * 3 && got < n_samples; i++) {
+            float d;
+            if (dw3000_twr_initiator_once(&d)) { sum += d; got++; }
+            deca_sleep(15);
+        }
+        if (got < n_samples / 2) {
+            printf("[CAL] iter%d: 측정 부족(%d) - 앵커/거리/LOS 확인\r\n", it, got);
+            return g_ant_dly;
+        }
+        double avg = sum / got;
+        double err = avg - (double)known_m;                 /* + 이면 측정이 큼 */
+        printf("[CAL] iter%d n=%d avg=%dmm err=%dmm antdly=%u\r\n",
+               it, got, (int)(avg * 1000.0), (int)(err * 1000.0), g_ant_dly);
+
+        if (fabs(err) <= CAL_TOL_M) {
+            printf("[CAL] 수렴 OK. 최종 antenna delay = %u\r\n", g_ant_dly);
+            return g_ant_dly;
+        }
+        /* 오차(m) → 시간(s) → DTU(ticks). 딜레이를 키우면 측정거리가 줄어든다.
+           TX/RX 동일값 가정 → 절반씩 보정(문서 절차 4.2 / 6). */
+        double err_dtu = (err / SPEED_OF_LIGHT) / DWT_TIME_UNITS;
+        int32_t corr = (int32_t)(err_dtu / 2.0);
+        if (corr == 0) corr = (err > 0) ? 1 : -1;           /* 최소 1틱 이동 */
+        int32_t nd = (int32_t)g_ant_dly + corr;
+        if (nd < 0) nd = 0;
+        if (nd > 0xFFFF) nd = 0xFFFF;
+        g_ant_dly = (uint16_t)nd;
+        dwt_settxantennadelay(g_ant_dly);
+        dwt_setrxantennadelay(g_ant_dly);
+    }
+    printf("[CAL] 최대 반복 도달. antenna delay = %u\r\n", g_ant_dly);
+    return g_ant_dly;
 }
 
 /* ------------------------------------------------------------------ *

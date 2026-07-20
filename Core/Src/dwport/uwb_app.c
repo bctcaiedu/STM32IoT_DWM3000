@@ -79,6 +79,17 @@ void uwb_app_run(void)
 #else
     /* -------- 태그: 주기적 레인징 + (옵션)BLE notify -------- */
     printf("UWB INITIATOR (tag) 시작\r\n");
+
+  #if UWB_CALIBRATE
+    /* ===== 안테나 딜레이 캘리브레이션 모드 =====
+       앵커를 UWB_CAL_KNOWN_MM 거리에 정확히 두고 실행. */
+    printf("=== 안테나 딜레이 캘리브레이션 (기준 %d mm) ===\r\n", UWB_CAL_KNOWN_MM);
+    uint16_t antdly = dw3000_twr_calibrate((float)UWB_CAL_KNOWN_MM / 1000.0f, 100, 12);
+    printf("=== 완료: antenna delay = %u ===\r\n", antdly);
+    printf("dw3000_twr.c 의 TX_ANT_DLY/RX_ANT_DLY 를 %u 로 바꾸고 UWB_CALIBRATE=0 으로.\r\n", antdly);
+    while (1) { deca_sleep(1000); }   /* 정지 */
+  #endif
+
   #if UWB_ENABLE_BLE
     uwb_ble_init();
   #endif

@@ -24,4 +24,13 @@ bool dw3000_twr_initiator_once(float *distance_m);
 /* RESPONDER: poll 수신 → 타임스탬프 담아 response 지연송신 (블로킹 1회). */
 void dw3000_twr_responder_once(void);
 
+/* 런타임 안테나 딜레이 설정/조회 (TX=RX 동일값) */
+void     dw3000_twr_set_antdelay(uint16_t d);
+uint16_t dw3000_twr_get_antdelay(void);
+
+/* 안테나 딜레이 캘리브레이션 (INITIATOR 에서 실행).
+ *  앵커를 known_m 거리에 두고 n_samples 회 평균 측정 → 오차 보정 → max_iter 회 반복.
+ *  반환값(최종 안테나 딜레이)을 dw3000_twr.c 의 TX_ANT_DLY/RX_ANT_DLY 에 반영한다. */
+uint16_t dw3000_twr_calibrate(float known_m, int n_samples, int max_iter);
+
 #endif /* DW3000_TWR_H */

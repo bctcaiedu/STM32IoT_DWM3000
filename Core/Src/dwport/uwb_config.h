@@ -23,6 +23,13 @@
 /* === 여기만 바꾸면 됨 === */
 #define UWB_ROLE        UWB_ROLE_INITIATOR
 #define UWB_ENABLE_BLE  1
+
+/* 안테나 딜레이 캘리브레이션 (INITIATOR 전용).
+ *  1 로 두고 앵커(RESPONDER)를 UWB_CAL_KNOWN_MM 거리에 정확히 배치 후 플래시.
+ *  시리얼에 나오는 최종 antenna delay 값을 dw3000_twr.c 의
+ *  TX_ANT_DLY/RX_ANT_DLY 에 반영한 뒤 다시 0 으로 되돌린다. */
+#define UWB_CALIBRATE     0
+#define UWB_CAL_KNOWN_MM  2000     /* 레이저로 잰 실제 기준 거리 (mm) */
 /* ======================== */
 
 #endif /* UWB_CONFIG_H */
