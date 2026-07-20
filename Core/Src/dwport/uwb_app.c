@@ -47,10 +47,12 @@ static float median_of(const float *src, int n)
 static float dist_filter(float raw)
 {
     static int reject_run = 0;
-    /* 큰 점프는 일시 스파이크로 보고 최대 3회까지 무시(진짜 이동이면 곧 수용) */
-    if (filt_ema > 0.0f && fabsf(raw - filt_ema) > JUMP_GATE_M && reject_run < 3) {
-        reject_run++;
-        return filt_ema;
+    /* 직전 추정 대비 큰 점프: 일시 스파이크는 최대 3회 무시하되,
+       3회 연속이면 '실제 이동'으로 보고 필터를 리셋해 새 거리로 즉시 스냅.
+       (예전엔 계속 거부해 값이 멈추는 버그가 있었음) */
+    if (filt_ema > 0.0f && fabsf(raw - filt_ema) > JUMP_GATE_M) {
+        if (reject_run < 3) { reject_run++; return filt_ema; }
+        filt_cnt = 0; filt_idx = 0; filt_ema = -1.0f;   /* 리셋 → 새 위치로 */
     }
     reject_run = 0;
 

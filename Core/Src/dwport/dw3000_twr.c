@@ -44,8 +44,9 @@ static uint8_t rx_buffer[24];
  *  1 uus = 512/499.2 MHz ≈ 1.026 µs.  채널5/6.8Mbps/PLEN128 기준 여유값. */
 #define UUS_TO_DWT_TIME             65536
 #define POLL_TX_TO_RESP_RX_DLY_UUS  240   /* initiator: TX 후 RX 켜기까지 지연 */
-#define RESP_RX_TIMEOUT_UUS         400   /* initiator: 응답 대기 타임아웃 */
-#define POLL_RX_TO_RESP_TX_DLY_UUS  450   /* responder: poll 수신 후 응답 송신까지 */
+#define RESP_RX_TIMEOUT_UUS         900   /* initiator: 응답 대기 타임아웃 (PLEN256 대비 확대) */
+#define POLL_RX_TO_RESP_TX_DLY_UUS  700   /* responder: poll 수신 후 응답 송신까지
+                                             (PLEN256 프리앰블(~260us) 리드타임 확보 → 지연TX 실패 방지) */
 
 #define SPEED_OF_LIGHT 299702547.0   /* m/s (공기 중) */
 

@@ -16,17 +16,18 @@
 
 extern const struct dwt_probe_s dw3000_probe_interf;
 
-/* 채널5 / 64MHz PRF / preamble code 9 — 송·수신측 동일하게 사용 */
+/* 채널5 / 64MHz PRF / preamble code 9 — 송·수신측 동일하게 사용.
+   [1단계 도달거리↑] 데이터레이트는 검증된 6.8M 유지, 프리앰블만 128→256 (감도↑). */
 static dwt_config_t dw_cfg = {
     5,                  /* channel */
-    DWT_PLEN_128,       /* preamble length */
-    DWT_PAC8,           /* PAC size */
+    DWT_PLEN_256,       /* preamble length (128→256, 도달거리↑) */
+    DWT_PAC16,          /* PAC size (PLEN256 권장 PAC16) */
     9, 9,               /* TX/RX preamble code */
     1,                  /* SFD: 1 = non-standard 8-symbol */
-    DWT_BR_6M8,         /* data rate */
+    DWT_BR_6M8,         /* data rate (6.8M 유지) */
     DWT_PHRMODE_STD,
     DWT_PHRRATE_STD,
-    (129 + 8 - 8),      /* SFD timeout */
+    (256 + 1 + 8 - 16), /* SFD timeout = PLEN + 1 + SFD(8) - PAC(16) = 249 */
     DWT_STS_MODE_OFF,
     DWT_STS_LEN_64,
     DWT_PDOA_M0
