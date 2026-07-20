@@ -143,7 +143,7 @@ int main(void)
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_USB_Init();
   /* USER CODE BEGIN 2 */
-  char *banner = "\r\n=== B-L4S5I-IOT01A + DWM3000 (Qorvo driver) ===\r\n";
+  char *banner = "\r\n=== B-L4S5I-IOT01A + DWM3000 (Qorvo driver) by SS-TWR ===\r\n";
   HAL_UART_Transmit(&huart1, (uint8_t *)banner, strlen(banner), HAL_MAX_DELAY);
 
   /* Qorvo dwt_uwb_driver 로 DW3000 초기화 (reset → IDLE_RC → probe → init → configure) */
