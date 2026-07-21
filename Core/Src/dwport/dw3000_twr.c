@@ -19,6 +19,7 @@
  *    실측에서 무응답이 나면 이 값들을 조정해야 할 수 있음(가장 흔한 튜닝 포인트).
  */
 #include "dw3000_twr.h"
+#include "dw3000_cal.h"
 #include "deca_device_api.h"
 #include <string.h>
 #include <stdio.h>
@@ -99,6 +100,10 @@ static uint32_t sched_tx_ts32(uint32_t sched)
 /* ------------------------------------------------------------------ */
 void dw3000_twr_init(void)
 {
+    /* Flash 에 저장된 캘리브레이션 값이 있으면 사용, 없으면 기본값 */
+    g_ant_dly = dw3000_cal_load(TX_ANT_DLY);
+    if (dw3000_cal_exists())
+        printf("[CAL] Flash 저장값 사용: antenna delay = %u\r\n", g_ant_dly);
     dwt_setrxantennadelay(g_ant_dly);
     dwt_settxantennadelay(g_ant_dly);
     /* rxaftertxdelay / rxtimeout 은 단계별로 인라인 설정한다. */
@@ -298,7 +303,9 @@ uint16_t dw3000_twr_calibrate(float known_m, int n_samples, int max_iter)
         printf("[CAL] iter%d n=%d avg=%dmm err=%dmm antdly=%u\r\n",
                it, got, (int)(avg * 1000.0), (int)(err * 1000.0), g_ant_dly);
         if (fabs(err) <= CAL_TOL_M) {
-            printf("[CAL] 수렴 OK. 최종 antenna delay = %u\r\n", g_ant_dly);
+            bool saved = dw3000_cal_save(g_ant_dly);
+            printf("[CAL] 수렴 OK. 최종 antenna delay = %u (Flash 저장:%s)\r\n",
+                   g_ant_dly, saved ? "성공" : "실패");
             return g_ant_dly;
         }
         double err_dtu = (err / SPEED_OF_LIGHT) / DWT_TIME_UNITS;
@@ -311,6 +318,10 @@ uint16_t dw3000_twr_calibrate(float known_m, int n_samples, int max_iter)
         dwt_settxantennadelay(g_ant_dly);
         dwt_setrxantennadelay(g_ant_dly);
     }
-    printf("[CAL] 최대 반복 도달. antenna delay = %u\r\n", g_ant_dly);
+    {
+        bool saved = dw3000_cal_save(g_ant_dly);
+        printf("[CAL] 최대 반복 도달. antenna delay = %u (Flash 저장:%s)\r\n",
+               g_ant_dly, saved ? "성공" : "실패");
+    }
     return g_ant_dly;
 }
