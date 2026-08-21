@@ -19,33 +19,15 @@
  *    실측에서 무응답이 나면 이 값들을 조정해야 할 수 있음(가장 흔한 튜닝 포인트).
  */
 #include "dw3000_twr.h"
+#include "dw3000_twr_proto.h"
 #include "dw3000_cal.h"
 #include "deca_device_api.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 
-/* ---- 안테나 지연 ---- */
-#define TX_ANT_DLY 16385
-#define RX_ANT_DLY 16385
+/* 프레임 포맷 / 타이밍 상수는 dw3000_twr_proto.h 공용 */
 static uint16_t g_ant_dly = TX_ANT_DLY;
-#define CAL_TOL_M  0.02
-
-/* ---- 메시지 포맷 ---- */
-#define MSG_SN_IDX    2
-#define MSG_FUNC_IDX  9
-#define FUNC_POLL     0x21
-#define FUNC_RESP     0x10
-#define FUNC_FINAL    0x23
-#define FUNC_REPORT   0x24
-#define TS_LEN        4
-#define FCS_LEN       2
-/* FINAL 내 타임스탬프 오프셋 */
-#define FIN_POLL_TX_IDX   10
-#define FIN_RESP_RX_IDX   14
-#define FIN_FINAL_TX_IDX  18
-/* REPORT 내 거리(mm) 오프셋 */
-#define REP_DIST_IDX      10
 
 static uint8_t tx_poll_msg[]   = { 0x41,0x88,0,0xCA,0xDE,'W','A','V','E',FUNC_POLL, 0,0 };
 static uint8_t tx_resp_msg[]   = { 0x41,0x88,0,0xCA,0xDE,'V','E','W','A',FUNC_RESP, 0,0 };
@@ -54,22 +36,6 @@ static uint8_t tx_final_msg[]  = { 0x41,0x88,0,0xCA,0xDE,'W','A','V','E',FUNC_FI
 static uint8_t tx_report_msg[] = { 0x41,0x88,0,0xCA,0xDE,'V','E','W','A',FUNC_REPORT,
                                    0,0,0,0 };                             /* +4 dist */
 static uint8_t rx_buffer[28];
-
-/* ---- 타이밍 (UWB microseconds) — PLEN256 대비 넉넉히 ---- */
-#define UUS_TO_DWT_TIME              65536
-/* initiator */
-#define POLL_TX_TO_RESP_RX_DLY_UUS   300
-#define RESP_RX_TIMEOUT_UUS          2000
-#define RESP_RX_TO_FINAL_TX_DLY_UUS  1500
-#define FINAL_TX_TO_REPORT_RX_DLY_UUS 200
-#define REPORT_RX_TIMEOUT_UUS        2000
-/* responder */
-#define POLL_RX_TO_RESP_TX_DLY_UUS   700
-#define RESP_TX_TO_FINAL_RX_DLY_UUS  300
-#define FINAL_RX_TIMEOUT_UUS         3000
-#define REPORT_TX_DLY_UUS            900
-
-#define SPEED_OF_LIGHT 299702547.0
 
 static uint8_t frame_seq_nb = 0;
 
@@ -131,7 +97,7 @@ bool dw3000_twr_initiator_once(float *distance_m)
     tx_poll_msg[MSG_SN_IDX] = frame_seq_nb;
     dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
     dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);
-    dwt_writetxfctrl(sizeof(tx_poll_msg) + FCS_LEN, 0, 1);
+    dwt_writetxfctrl(sizeof(tx_poll_msg) + TWR_FCS_LEN, 0, 1);
     dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
 
     /* RESPONSE 수신 대기 */
@@ -167,7 +133,7 @@ bool dw3000_twr_initiator_once(float *distance_m)
     dwt_setrxtimeout(REPORT_RX_TIMEOUT_UUS);
     dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
     dwt_writetxdata(sizeof(tx_final_msg), tx_final_msg, 0);
-    dwt_writetxfctrl(sizeof(tx_final_msg) + FCS_LEN, 0, 1);
+    dwt_writetxfctrl(sizeof(tx_final_msg) + TWR_FCS_LEN, 0, 1);
     if (dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
         dwt_forcetrxoff(); return false;    /* 지연 final 실패(시각 지남) */
     }
@@ -231,7 +197,7 @@ void dw3000_twr_responder_once(void)
     tx_resp_msg[MSG_SN_IDX] = sn;
     dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
     dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0);
-    dwt_writetxfctrl(sizeof(tx_resp_msg) + FCS_LEN, 0, 1);
+    dwt_writetxfctrl(sizeof(tx_resp_msg) + TWR_FCS_LEN, 0, 1);
     if (dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
         dwt_forcetrxoff(); return;
     }
@@ -272,7 +238,7 @@ void dw3000_twr_responder_once(void)
     dwt_setdelayedtrxtime(report_tx_time);
     dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
     dwt_writetxdata(sizeof(tx_report_msg), tx_report_msg, 0);
-    dwt_writetxfctrl(sizeof(tx_report_msg) + FCS_LEN, 0, 0);
+    dwt_writetxfctrl(sizeof(tx_report_msg) + TWR_FCS_LEN, 0, 0);
     if (dwt_starttx(DWT_START_TX_DELAYED) == DWT_SUCCESS) {
         uint32_t g2 = 0;
         while (!(dwt_readsysstatuslo() & DWT_INT_TXFRS_BIT_MASK)) { if (++g2 > 200000UL) break; }

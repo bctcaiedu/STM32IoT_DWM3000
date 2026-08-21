@@ -22,6 +22,8 @@
 #include "stm32l4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "dw3000_hw.h"   /* DW3000 IRQ (PB2 / EXTI2) */
+#include "config.h"      /* CONFIG_DW3000_GPIO_IRQ_* */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -235,5 +237,17 @@ void EXTI15_10_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
-
+/**
+  * @brief  EXTI line2 - DW3000 IRQ (PB2 / ARD_D8, rising edge).
+  *
+  *  HAL_GPIO_EXTI_IRQHandler() 를 쓰지 않고 직접 처리한다.
+  *  이유: HAL_GPIO_EXTI_Callback() 은 이미 BlueNRG(hci_tl_interface_template.c)
+  *       가 override 해서 쓰고 있어 여기서 또 정의할 수 없기 때문.
+  *  EXTI2 는 이 프로젝트에서 DW3000 전용이므로 라우팅 분기도 필요 없다.
+  */
+void EXTI2_IRQHandler(void)
+{
+  __HAL_GPIO_EXTI_CLEAR_IT(CONFIG_DW3000_GPIO_IRQ_PIN);
+  dw3000_hw_isr();
+}
 /* USER CODE END 1 */

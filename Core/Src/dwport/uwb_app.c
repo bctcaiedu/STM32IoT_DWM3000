@@ -9,9 +9,11 @@
  *  │ BLE 는 INITIATOR 에서만. X-CUBE-BLE1 활성화 후 1 로.       │
  *  └──────────────────────────────────────────────────────────┘
  */
+#include "main.h"             /* HAL, __WFI() */
 #include "uwb_app.h"
 #include "uwb_config.h"       /* 역할/BLE 설정은 여기서 */
 #include "dw3000_twr.h"
+#include "dw3000_twr_irq.h"
 #include "deca_device_api.h"
 #include <stdio.h>
 #include <math.h>
@@ -73,10 +75,35 @@ void uwb_app_run(void)
 
 #if (UWB_ROLE == UWB_ROLE_RESPONDER)
     /* -------- 앵커: poll 받으면 response 송신 무한 반복 -------- */
-    printf("UWB RESPONDER (anchor) 시작\r\n");
+  #if UWB_USE_IRQ
+    printf("UWB RESPONDER (anchor) 시작 [인터럽트 모드]\r\n");
+    if (dw3000_twr_irq_init() != 0) {
+        printf("IRQ init FAIL - 폴링으로 폴백\r\n");
+        while (1) { dw3000_twr_responder_once(); }
+    }
+    dw3000_twr_irq_responder_start();
+    uint32_t hb = HAL_GetTick();
+    while (1) {
+        float d;
+        if (dw3000_twr_irq_responder_poll(&d)) {
+            /* 계산은 ISR 이 이미 끝냈고 여기선 로그만 (ISR 안에서 printf 금지) */
+            printf("anchor: distance = %d cm\r\n", (int)(d * 100.0f));
+        }
+        dw3000_twr_irq_responder_service();   /* 무이벤트 워치독 */
+
+        if ((HAL_GetTick() - hb) >= 3000U) {  /* 3초 하트비트 (irq=0 이면 배선 문제) */
+            hb = HAL_GetTick();
+            printf("anchor: waiting... irq=%lu\r\n",
+                   (unsigned long)dw3000_twr_irq_get_irq_count());
+        }
+        __WFI();                              /* 인터럽트 올 때까지 대기 */
+    }
+  #else
+    printf("UWB RESPONDER (anchor) 시작 [폴링 모드]\r\n");
     while (1) {
         dw3000_twr_responder_once();
     }
+  #endif
 
 #else
     /* -------- 태그: 주기적 레인징 + (옵션)BLE notify -------- */
@@ -96,14 +123,42 @@ void uwb_app_run(void)
     uwb_ble_init();
   #endif
 
+  #if UWB_USE_IRQ
+    if (dw3000_twr_irq_init() != 0) {
+        printf("IRQ init FAIL\r\n");
+    }
+    printf("[인터럽트 모드] IRQ = PB2(ARD_D8) / EXTI2\r\n");
+  #else
+    printf("[폴링 모드]\r\n");
+  #endif
+
     uint32_t miss = 0;
     while (1) {
       #if UWB_ENABLE_BLE
         uwb_ble_process();        /* BLE 이벤트 펌프 */
       #endif
 
-        float dist;
-        if (dw3000_twr_initiator_once(&dist)) {
+        float dist = 0.0f;
+        bool  ok;
+
+      #if UWB_USE_IRQ
+        /* POLL 만 쏘고 곧바로 리턴. 나머지 3프레임(RESP/FINAL/REPORT)은 ISR 이
+           진행한다. 교환이 도는 ~6ms 동안 CPU 는 BLE 를 돌리거나 __WFI() 로 쉰다. */
+        dw3000_twr_irq_initiator_start();
+        int r;
+        while ((r = dw3000_twr_irq_initiator_poll(&dist)) == 0) {
+          #if UWB_ENABLE_BLE
+            uwb_ble_process();
+          #else
+            __WFI();
+          #endif
+        }
+        ok = (r > 0);
+      #else
+        ok = dw3000_twr_initiator_once(&dist);
+      #endif
+
+        if (ok) {
             float f = dist_filter(dist);     /* 필터링된 값 */
             printf("distance = %d cm (raw %d)\r\n",
                    (int)(f * 100.0f), (int)(dist * 100.0f));
@@ -112,7 +167,16 @@ void uwb_app_run(void)
           #endif
             miss = 0;
         } else {
-            if (++miss % 20 == 0) printf("(no response from anchor)\r\n");
+            if (++miss % 20 == 0) {
+              #if UWB_USE_IRQ
+                /* irq=0 이면 EXTI 가 한 번도 안 떴다 = IRQ 배선/핀맵 문제.
+                   (DWM3000EVB IRQ 가 아두이노 D8=PB2 에 와 있는지 확인) */
+                printf("(no response from anchor, irq=%lu)\r\n",
+                       (unsigned long)dw3000_twr_irq_get_irq_count());
+              #else
+                printf("(no response from anchor)\r\n");
+              #endif
+            }
         }
 
         deca_sleep(100);          /* 약 10 Hz */
